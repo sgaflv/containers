@@ -2,6 +2,10 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# ---------------------------------------------------------------------------
+# System dependencies
+# ---------------------------------------------------------------------------
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     build-essential \
@@ -18,13 +22,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tar \
     xz-utils \
     wl-clipboard \
-    libc6-dev-i386 lib32z1 openjdk-17-jdk \
-    python3 python3-pip python3-venv \
+    libc6-dev-i386 \
+    lib32z1 \
+    openjdk-17-jdk \
     android-sdk \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd
-    
-    
+
+
+# ---------------------------------------------------------------------------
+# User
+# ---------------------------------------------------------------------------
 
 ARG UID=1000
 ARG GID=1000
@@ -43,32 +51,114 @@ USER opencode
 WORKDIR /home/opencode
 
 ENV HOME=/home/opencode
-ENV CARGO_HOME=/home/opencode/.cargo
-ENV RUSTUP_HOME=/home/opencode/.rustup
-ENV PATH=/home/opencode/.cargo/bin:/home/opencode/.local/bin:/usr/lib/android-sdk/cmdline-tools/latest/bin:/home/opencode/android-sdk/platform-tools:${PATH}
-
 
 # Rust
+ENV CARGO_HOME=/home/opencode/.cargo
+ENV RUSTUP_HOME=/home/opencode/.rustup
+
+# uv-managed Python environment
+ENV VIRTUAL_ENV=/home/opencode/.venv
+
+# Put all user-level development tools first.
+ENV PATH=/home/opencode/.cargo/bin:/home/opencode/.local/bin:/home/opencode/.venv/bin:/usr/lib/android-sdk/cmdline-tools/latest/bin:/home/opencode/android-sdk/platform-tools:${PATH}
+
+
+# ---------------------------------------------------------------------------
+# uv
+# ---------------------------------------------------------------------------
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && uv --version
+
+# Install a modern Python through uv.
+#
+# Ubuntu 24.04 ships with Python 3.12, but letting uv manage Python means
+# the development environment is independent of the distro's Python setup.
+RUN uv python install 3.12
+
+
+# ---------------------------------------------------------------------------
+# Python environment
+# ---------------------------------------------------------------------------
+
+RUN uv venv /home/opencode/.venv --python 3.12
+
+# Upgrade packaging/build infrastructure.
+RUN uv pip install \
+    pip \
+    setuptools \
+    wheel \
+    packaging \
+    build \
+    hatchling \
+    maturin \
+    setuptools-rust
+
+
+# ---------------------------------------------------------------------------
+# PyTorch
+#
+# CPU version by default.
+#
+# For NVIDIA/CUDA, replace this installation with the appropriate PyTorch
+# CUDA index, or use an NVIDIA CUDA base image.
+# ---------------------------------------------------------------------------
+
+RUN uv pip install \
+    torch \
+    torchvision \
+    torchaudio \
+    --index-url https://download.pytorch.org/whl/cpu
+
+
+# Useful scientific / ML ecosystem packages.
+RUN uv pip install \
+    numpy \
+    scipy \
+    pandas \
+    matplotlib \
+    scikit-learn \
+    sympy \
+    pillow \
+    pyyaml \
+    requests \
+    httpx \
+    tqdm \
+    einops \
+    psutil
+
+
+# ---------------------------------------------------------------------------
+# Rust
+# ---------------------------------------------------------------------------
+
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --profile minimal \
     && rustc --version \
     && cargo --version
 
-# add rust components
-RUN rustup component add rust-analyzer
-RUN rustup component add clippy
-RUN rustup component add rustfmt
+RUN rustup component add \
+    rust-analyzer \
+    clippy \
+    rustfmt
 
 RUN cargo install just
 
+
+# ---------------------------------------------------------------------------
 # OpenCode
+# ---------------------------------------------------------------------------
+
 RUN curl -fsSL https://opencode.ai/install | bash
 
-RUN echo 'export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"' \
+RUN echo 'export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.venv/bin:$PATH"' \
     >> "$HOME/.bashrc"
+
+
+# ---------------------------------------------------------------------------
+# Final environment
+# ---------------------------------------------------------------------------
 
 WORKDIR /home/opencode
 
 CMD ["/home/opencode/.opencode/bin/opencode"]
-
-

@@ -6,7 +6,7 @@ PROJECT_NAME="$(basename "$PROJECT_DIR")"
 
 OPENCODE_CONFIG="$HOME/.config/opencode"
 
-CONTAINERFILE_DIR="$HOME/c/ws/container"
+CONTAINERFILE_DIR="$HOME/c/ws/containers"
 CONTAINERFILE="$CONTAINERFILE_DIR/Containerfile-opencode"
 IMAGE_NAME="opencode-dev"
 
