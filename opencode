@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_DIR="$(realpath "$(pwd)")"
+PROJECT_NAME="$(basename "$PROJECT_DIR")"
+
+OPENCODE_CONFIG="$HOME/.config/opencode"
+
+CONTAINERFILE_DIR="$HOME/c/ws/container"
+CONTAINERFILE="$CONTAINERFILE_DIR/Containerfile-opencode"
+IMAGE_NAME="opencode-dev"
+
+
+# One container per project, so the bind mount can never point at
+# a different project after the container has been created.
+CONTAINER_NAME="opencode-${PROJECT_NAME}"
+
+# The project gets its own stable path inside the container:
+#   /workspace/some_game
+CONTAINER_PROJECT_DIR="/workspace/${PROJECT_NAME}"
+
+echo "Starting OpenCode for project: $PROJECT_DIR"
+echo "Container project path: $CONTAINER_PROJECT_DIR"
+
+mkdir -p "$OPENCODE_CONFIG"
+
+if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    WAYLAND_SOCKET="$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
+
+    if [[ ! -S "$WAYLAND_SOCKET" ]]; then
+        echo "Warning: Wayland socket not found: $WAYLAND_SOCKET"
+    fi
+fi
+
+# Don't allow the project itself to be HOME or a parent of HOME.
+if [[ "$PROJECT_DIR" == "$HOME" || "$HOME/" == "$PROJECT_DIR/"* ]]; then
+    echo "Refusing to run: project directory is HOME or contains HOME."
+    exit 1
+fi
+
+# Verify the custom Containerfile exists.
+if [[ ! -f "$CONTAINERFILE" ]]; then
+    echo "Containerfile not found: $CONTAINERFILE"
+    exit 1
+fi
+
+# Build the custom image if it doesn't already exist.
+if ! podman image exists "$IMAGE_NAME"; then
+    echo "Podman image '$IMAGE_NAME' does not exist."
+    echo "Building from: $CONTAINERFILE"
+
+    podman build \
+        --file "$CONTAINERFILE" \
+        --tag "$IMAGE_NAME" \
+        "$CONTAINERFILE_DIR"
+fi
+
+# Reuse the existing container for THIS project.
+if podman container exists "$CONTAINER_NAME"; then
+    echo "Reusing existing container '$CONTAINER_NAME'."
+    exec podman start -ai "$CONTAINER_NAME"
+fi
+
+# Create the container for the first time.
+echo "Creating container '$CONTAINER_NAME'."
+
+exec podman run -it \
+    --name "$CONTAINER_NAME" \
+    --userns=keep-id \
+    --cap-drop=ALL \
+    --security-opt=no-new-privileges \
+    --network=host \
+    -e WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+    -e XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}" \
+    -e HOME=/home/opencode \
+    -e XDG_CONFIG_HOME=/home/opencode/.config \
+    -e XDG_DATA_HOME=/home/opencode/.local/share \
+    -e XDG_CACHE_HOME=/home/opencode/.cache \
+    -e ANDROID_HOME="/usr/lib/android-sdk" \
+    -v "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/wayland-0:ro" \
+    -v "$PROJECT_DIR:$CONTAINER_PROJECT_DIR:rw,Z" \
+    -v "$OPENCODE_CONFIG:/home/opencode/.config/opencode:rw,Z" \
+    -w "$CONTAINER_PROJECT_DIR" \
+    "$IMAGE_NAME"
+

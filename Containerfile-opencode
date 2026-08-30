@@ -1,0 +1,74 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    build-essential \
+    ca-certificates \
+    curl \
+    fd-find \
+    git \
+    gzip \
+    less \
+    openssh-client \
+    libssl-dev \
+    pkg-config \
+    ripgrep \
+    tar \
+    xz-utils \
+    wl-clipboard \
+    libc6-dev-i386 lib32z1 openjdk-17-jdk \
+    python3 python3-pip python3-venv \
+    android-sdk \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd
+    
+    
+
+ARG UID=1000
+ARG GID=1000
+
+RUN userdel -r ubuntu 2>/dev/null || true \
+    && groupdel ubuntu 2>/dev/null || true \
+    && groupadd --gid "${GID}" opencode \
+    && useradd \
+        --uid "${UID}" \
+        --gid "${GID}" \
+        --create-home \
+        --shell /bin/bash \
+        opencode
+
+USER opencode
+WORKDIR /home/opencode
+
+ENV HOME=/home/opencode
+ENV CARGO_HOME=/home/opencode/.cargo
+ENV RUSTUP_HOME=/home/opencode/.rustup
+ENV PATH=/home/opencode/.cargo/bin:/home/opencode/.local/bin:/usr/lib/android-sdk/cmdline-tools/latest/bin:/home/opencode/android-sdk/platform-tools:${PATH}
+
+
+# Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal \
+    && rustc --version \
+    && cargo --version
+
+# add rust components
+RUN rustup component add rust-analyzer
+RUN rustup component add clippy
+RUN rustup component add rustfmt
+
+RUN cargo install just
+
+# OpenCode
+RUN curl -fsSL https://opencode.ai/install | bash
+
+RUN echo 'export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"' \
+    >> "$HOME/.bashrc"
+
+WORKDIR /home/opencode
+
+CMD ["/home/opencode/.opencode/bin/opencode"]
+
+
