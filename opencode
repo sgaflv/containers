@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
+
+
 set -euo pipefail
 
 PROJECT_DIR="$(realpath "$(pwd)")"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
 
-OPENCODE_CONFIG="$HOME/.config/opencode"
-
-CONTAINERFILE_DIR="$HOME/c/ws/containers"
+# Resolve the repo location from this script, so it works from any checkout.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+CONTAINERFILE_DIR="$SCRIPT_DIR"
 CONTAINERFILE="$CONTAINERFILE_DIR/Containerfile-opencode"
-IMAGE_NAME="opencode-dev"
 
+IMAGE_NAME="opencode-dev"
 
 # One container per project, so the bind mount can never point at
 # a different project after the container has been created.
@@ -22,7 +24,6 @@ CONTAINER_PROJECT_DIR="/workspace/${PROJECT_NAME}"
 echo "Starting OpenCode for project: $PROJECT_DIR"
 echo "Container project path: $CONTAINER_PROJECT_DIR"
 
-mkdir -p "$OPENCODE_CONFIG"
 
 if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
     WAYLAND_SOCKET="$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY"
@@ -55,11 +56,40 @@ if ! podman image exists "$IMAGE_NAME"; then
         "$CONTAINERFILE_DIR"
 fi
 
+# "sh" means: open a shell in the EXISTING project container.
+# Never create a container in this mode.
+if [[ "${1:-}" == "sh" ]]; then
+    if ! podman container exists "$CONTAINER_NAME"; then
+        echo "Container '$CONTAINER_NAME' does not exist."
+        echo "Start OpenCode normally first to create it."
+        exit 1
+    fi
+
+    # Start the container if it isn't running.
+    if [[ "$(podman inspect -f '{{.State.Running}}' "$CONTAINER_NAME")" != "true" ]]; then
+        echo "Starting stopped container '$CONTAINER_NAME'."
+        podman start "$CONTAINER_NAME" >/dev/null
+    fi
+
+    echo "Opening shell in '$CONTAINER_NAME'."
+
+    exec podman exec -it \
+        --workdir "$CONTAINER_PROJECT_DIR" \
+        "$CONTAINER_NAME" \
+        bash
+fi
+
 # Reuse the existing container for THIS project.
 if podman container exists "$CONTAINER_NAME"; then
     echo "Reusing existing container '$CONTAINER_NAME'."
     exec podman start -ai "$CONTAINER_NAME"
 fi
+
+
+mkdir -p "$HOME/.config/opencode"
+mkdir -p "$HOME/.local/state/opencode"
+mkdir -p "$HOME/.local/share/opencode"
+#mkdir -p "$HOME/.cache/opencode"
 
 # Create the container for the first time.
 echo "Creating container '$CONTAINER_NAME'."
@@ -70,16 +100,16 @@ exec podman run -it \
     --cap-drop=ALL \
     --security-opt=no-new-privileges \
     --network=host \
-    -e WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
     -e XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}" \
     -e HOME=/home/opencode \
     -e XDG_CONFIG_HOME=/home/opencode/.config \
     -e XDG_DATA_HOME=/home/opencode/.local/share \
     -e XDG_CACHE_HOME=/home/opencode/.cache \
     -e ANDROID_HOME="/usr/lib/android-sdk" \
-    -v "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:/tmp/wayland-0:ro" \
+    -v "$HOME/.local/share/opencode:/home/opencode/.local/share/opencode:rw,Z" \
+    -v "$HOME/.local/state/opencode:/home/opencode/.local/state/opencode:rw,Z" \
+    -v "$HOME/.config/opencode:/home/opencode/.config/opencode:rw,Z" \
     -v "$PROJECT_DIR:$CONTAINER_PROJECT_DIR:rw,Z" \
-    -v "$OPENCODE_CONFIG:/home/opencode/.config/opencode:rw,Z" \
     -w "$CONTAINER_PROJECT_DIR" \
     "$IMAGE_NAME"
 

@@ -10,25 +10,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     build-essential \
     ca-certificates \
+    clang \
+    clangd \
+    clang-tools \
+    cmake \
     curl \
     fd-find \
     git \
+    gradle \
     gzip \
     less \
-    openssh-client \
+    lib32z1 \
+    libc6-dev-i386 \
+    libgl1-mesa-dev \
+    libglu1-mesa-dev \
     libssl-dev \
+    libsdl2-dev \
+    libsdl2-mixer-dev \
+    freeglut3-dev \
+    maven \
+    openjdk-21-jdk \
+    openssh-client \
     pkg-config \
     ripgrep \
     tar \
+    unzip \
     xz-utils \
-    wl-clipboard \
-    libc6-dev-i386 \
-    lib32z1 \
-    openjdk-17-jdk \
-    android-sdk \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd
-
 
 # ---------------------------------------------------------------------------
 # User
@@ -48,44 +57,101 @@ RUN userdel -r ubuntu 2>/dev/null || true \
         opencode
 
 USER opencode
-WORKDIR /home/opencode
 
 ENV HOME=/home/opencode
+WORKDIR=${HOME}
 
+# ---------------------------------------------------------------------------
+# Java
+#
+# OpenCode's built-in JDTLS requires Java 21+.
+# OpenCode manages JDTLS itself; it is intentionally NOT installed here.
+# ---------------------------------------------------------------------------
+
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+ENV PATH=${JAVA_HOME}/bin:${HOME}/.cargo/bin:${HOME}/.local/bin:${HOME}/.venv/bin:${PATH}
+
+# ---------------------------------------------------------------------------
 # Rust
-ENV CARGO_HOME=/home/opencode/.cargo
-ENV RUSTUP_HOME=/home/opencode/.rustup
+# ---------------------------------------------------------------------------
 
-# uv-managed Python environment
-ENV VIRTUAL_ENV=/home/opencode/.venv
+ENV CARGO_HOME=${HOME}/.cargo
+ENV RUSTUP_HOME=${HOME}/.rustup
 
-# Put all user-level development tools first.
-ENV PATH=/home/opencode/.cargo/bin:/home/opencode/.local/bin:/home/opencode/.venv/bin:/usr/lib/android-sdk/cmdline-tools/latest/bin:/home/opencode/android-sdk/platform-tools:${PATH}
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal \
+    && rustc --version \
+    && cargo --version
 
+RUN rustup component add \
+    rust-analyzer \
+    clippy \
+    rustfmt
+
+RUN cargo install just
 
 # ---------------------------------------------------------------------------
-# uv
+# Android SDK / NDK
 # ---------------------------------------------------------------------------
+
+ENV ANDROID_HOME=${HOME}/Android/Sdk
+ENV ANDROID_NDK_VERSION=28.2.13676358
+ENV ANDROID_NDK_ROOT=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}
+
+ENV PATH=${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/emulator:${PATH}
+
+RUN cd /tmp \
+    && curl -fLO https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip \
+    && rm -rf "${ANDROID_HOME}" \
+    && mkdir -p "${ANDROID_HOME}/cmdline-tools/latest" \
+    && unzip -q \
+        commandlinetools-linux-15859902_latest.zip \
+        -d "${ANDROID_HOME}/cmdline-tools/latest" \
+    && mv \
+        "${ANDROID_HOME}/cmdline-tools/latest/cmdline-tools/"* \
+        "${ANDROID_HOME}/cmdline-tools/latest/" \
+    && rmdir "${ANDROID_HOME}/cmdline-tools/latest/cmdline-tools" \
+    && rm commandlinetools-linux-15859902_latest.zip \
+    && sdkmanager --version
+
+# Uncomment if Android SDK/NDK should be installed during image build.
+#
+# RUN yes | sdkmanager --licenses >/dev/null || true \
+#     && sdkmanager \
+#         "platform-tools" \
+#         "ndk;${ANDROID_NDK_VERSION}"
+
+# ---------------------------------------------------------------------------
+# Python / uv
+# ---------------------------------------------------------------------------
+
+ENV UV_INSTALL_DIR=${HOME}/.local/bin
+ENV VIRTUAL_ENV=${HOME}/.venv
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && uv --version
 
-# Install a modern Python through uv.
-#
-# Ubuntu 24.04 ships with Python 3.12, but letting uv manage Python means
-# the development environment is independent of the distro's Python setup.
+# Let uv manage Python rather than using Ubuntu's Python installation.
 RUN uv python install 3.12
 
+# Create the default development environment.
+RUN uv venv ${HOME}/.venv --python 3.12
 
 # ---------------------------------------------------------------------------
-# Python environment
+# Python Language Server
+#
+# OpenCode's built-in Python LSP uses Pyright.
 # ---------------------------------------------------------------------------
 
-RUN uv venv /home/opencode/.venv --python 3.12
+RUN uv pip install pyright \
+    && pyright --version \
+    && pyright-langserver --help >/dev/null
 
-# Upgrade packaging/build infrastructure.
+# ---------------------------------------------------------------------------
+# Python packaging / native-extension tooling
+# ---------------------------------------------------------------------------
+
 RUN uv pip install \
-    pip \
     setuptools \
     wheel \
     packaging \
@@ -94,14 +160,12 @@ RUN uv pip install \
     maturin \
     setuptools-rust
 
-
 # ---------------------------------------------------------------------------
 # PyTorch
 #
-# CPU version by default.
+# CPU build by default.
 #
-# For NVIDIA/CUDA, replace this installation with the appropriate PyTorch
-# CUDA index, or use an NVIDIA CUDA base image.
+# For NVIDIA, replace this with the appropriate CUDA PyTorch index.
 # ---------------------------------------------------------------------------
 
 RUN uv pip install \
@@ -110,8 +174,10 @@ RUN uv pip install \
     torchaudio \
     --index-url https://download.pytorch.org/whl/cpu
 
+# ---------------------------------------------------------------------------
+# Common scientific / ML dependencies
+# ---------------------------------------------------------------------------
 
-# Useful scientific / ML ecosystem packages.
 RUN uv pip install \
     numpy \
     scipy \
@@ -127,38 +193,55 @@ RUN uv pip install \
     einops \
     psutil
 
-
-# ---------------------------------------------------------------------------
-# Rust
-# ---------------------------------------------------------------------------
-
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --profile minimal \
-    && rustc --version \
-    && cargo --version
-
-RUN rustup component add \
-    rust-analyzer \
-    clippy \
-    rustfmt
-
-RUN cargo install just
-
-
 # ---------------------------------------------------------------------------
 # OpenCode
 # ---------------------------------------------------------------------------
 
 RUN curl -fsSL https://opencode.ai/install | bash
 
-RUN echo 'export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$HOME/.venv/bin:$PATH"' \
-    >> "$HOME/.bashrc"
-
-
 # ---------------------------------------------------------------------------
-# Final environment
+# Verification
 # ---------------------------------------------------------------------------
 
-WORKDIR /home/opencode
+RUN echo "=== Core tools ===" \
+    && rg --version \
+    && fd --version \
+    && git --version \
+    && cmake --version \
+    \
+    && echo "=== C / C++ ===" \
+    && clang --version \
+    && clangd --version \
+    && clang-format --version \
+    && clang-tidy --version \
+    \
+    && echo "=== Java ===" \
+    && java -version \
+    && javac -version \
+    && mvn --version \
+    && gradle --version \
+    \
+    && echo "=== Rust ===" \
+    && rustc --version \
+    && cargo --version \
+    && rust-analyzer --version \
+    \
+    && echo "=== Python ===" \
+    && python --version \
+    && uv --version \
+    && pyright --version \
+    && pyright-langserver --help >/dev/null \
+    \
+    && echo "=== OpenCode ===" \
+    && opencode --version \
+    \
+    && echo "=== All development tools available ==="
+
+# ---------------------------------------------------------------------------
+# Final
+#
+# OpenCode configuration is intentionally NOT created here.
+# Mount ~/.config/opencode separately.
+# ---------------------------------------------------------------------------
 
 CMD ["/home/opencode/.opencode/bin/opencode"]
