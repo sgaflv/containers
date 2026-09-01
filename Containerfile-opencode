@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     clang \
     clangd \
+    clang-format \
+    clang-tidy \
     clang-tools \
     cmake \
     curl \
@@ -59,17 +61,14 @@ RUN userdel -r ubuntu 2>/dev/null || true \
 USER opencode
 
 ENV HOME=/home/opencode
-WORKDIR=${HOME}
+WORKDIR /home/opencode
 
 # ---------------------------------------------------------------------------
 # Java
-#
-# OpenCode's built-in JDTLS requires Java 21+.
-# OpenCode manages JDTLS itself; it is intentionally NOT installed here.
 # ---------------------------------------------------------------------------
 
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-ENV PATH=${JAVA_HOME}/bin:${HOME}/.cargo/bin:${HOME}/.local/bin:${HOME}/.venv/bin:${PATH}
+ENV PATH=${JAVA_HOME}/bin:${HOME}/.cargo/bin:${HOME}/.local/bin:${HOME}/.venv/bin:${HOME}/.opencode/bin:${PATH}
 
 # ---------------------------------------------------------------------------
 # Rust
@@ -145,7 +144,7 @@ RUN uv venv ${HOME}/.venv --python 3.12
 
 RUN uv pip install pyright \
     && pyright --version \
-    && pyright-langserver --help >/dev/null
+    && command -v pyright-langserver
 
 # ---------------------------------------------------------------------------
 # Python packaging / native-extension tooling
@@ -230,7 +229,7 @@ RUN echo "=== Core tools ===" \
     && python --version \
     && uv --version \
     && pyright --version \
-    && pyright-langserver --help >/dev/null \
+    && command -v pyright-langserver \
     \
     && echo "=== OpenCode ===" \
     && opencode --version \
