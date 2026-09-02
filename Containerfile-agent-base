@@ -1,0 +1,271 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ===========================================================================
+# System dependencies
+# ===========================================================================
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    build-essential \
+    ca-certificates \
+    clang \
+    clangd \
+    clang-format \
+    clang-tidy \
+    clang-tools \
+    cmake \
+    curl \
+    fd-find \
+    git \
+    gradle \
+    gzip \
+    less \
+    lib32z1 \
+    libc6-dev-i386 \
+    libgl1-mesa-dev \
+    libglu1-mesa-dev \
+    libssl-dev \
+    libsdl2-dev \
+    libsdl2-mixer-dev \
+    freeglut3-dev \
+    maven \
+    openjdk-21-jdk \
+    openssh-client \
+    pkg-config \
+    ripgrep \
+    tar \
+    unzip \
+    xz-utils \
+    zsh \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd
+
+# ===========================================================================
+# User
+#
+# UID/GID can be overridden at build time so files created in mounted
+# workspaces are owned by the host user.
+# ===========================================================================
+
+ARG UID=1000
+ARG GID=1000
+
+RUN userdel -r ubuntu 2>/dev/null || true \
+    && groupdel ubuntu 2>/dev/null || true \
+    && groupadd --gid "${GID}" agentuser \
+    && useradd \
+        --uid "${UID}" \
+        --gid "${GID}" \
+        --create-home \
+        --shell /bin/bash \
+        agentuser
+
+USER agentuser
+
+ENV HOME=/home/agentuser
+
+# ===========================================================================
+# Java
+# ===========================================================================
+
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+
+# ===========================================================================
+# Rust
+# ===========================================================================
+
+ENV CARGO_HOME=${HOME}/.cargo
+ENV RUSTUP_HOME=${HOME}/.rustup
+
+# ===========================================================================
+# User-local tools
+# ===========================================================================
+
+ENV PATH=${JAVA_HOME}/bin:${HOME}/.cargo/bin:${HOME}/.local/bin:${HOME}/.venv/bin:${PATH}
+
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal
+
+RUN rustup component add \
+        rust-analyzer \
+        clippy \
+        rustfmt
+
+
+RUN cargo install just
+
+# ===========================================================================
+# Android SDK / NDK
+# ===========================================================================
+
+ENV ANDROID_HOME=${HOME}/Android/Sdk
+ENV ANDROID_NDK_VERSION=28.2.13676358
+ENV ANDROID_NDK_ROOT=${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}
+
+ENV PATH=${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${ANDROID_HOME}/emulator:${PATH}
+
+RUN cd /tmp \
+    && curl -fLO \
+        https://dl.google.com/android/repository/commandlinetools-linux-15859902_latest.zip \
+    && rm -rf "${ANDROID_HOME}" \
+    && mkdir -p "${ANDROID_HOME}/cmdline-tools/latest" \
+    && unzip -q \
+        commandlinetools-linux-15859902_latest.zip \
+        -d "${ANDROID_HOME}/cmdline-tools/latest" \
+    && mv \
+        "${ANDROID_HOME}/cmdline-tools/latest/cmdline-tools/"* \
+        "${ANDROID_HOME}/cmdline-tools/latest/" \
+    && rmdir \
+        "${ANDROID_HOME}/cmdline-tools/latest/cmdline-tools" \
+    && rm \
+        commandlinetools-linux-15859902_latest.zip \
+    && sdkmanager --version
+
+# ---------------------------------------------------------------------------
+# Uncomment if Android SDK/NDK packages should be installed during image
+# build. Leaving these out keeps the base image substantially smaller.
+# ---------------------------------------------------------------------------
+#
+# RUN yes | sdkmanager --licenses >/dev/null || true \
+#     && sdkmanager \
+#         "platform-tools" \
+#         "ndk;${ANDROID_NDK_VERSION}"
+
+# ===========================================================================
+# Python / uv
+# ===========================================================================
+
+ENV UV_INSTALL_DIR=${HOME}/.local/bin
+ENV VIRTUAL_ENV=${HOME}/.venv
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && uv --version
+
+# Let uv manage Python rather than relying on Ubuntu's system Python.
+RUN uv python install 3.12
+
+# Default Python virtual environment.
+RUN uv venv "${HOME}/.venv" --python 3.12
+
+# ===========================================================================
+# Python Language Server
+#
+# Pyright is useful to both agentic coding tools and normal development.
+# ===========================================================================
+
+RUN uv pip install pyright \
+    && pyright --version \
+    && command -v pyright-langserver
+
+# ===========================================================================
+# Python packaging / native-extension tooling
+# ===========================================================================
+
+RUN uv pip install \
+        setuptools \
+        wheel \
+        packaging \
+        build \
+        hatchling \
+        maturin \
+        setuptools-rust
+
+# ===========================================================================
+# PyTorch
+#
+# CPU build by default.
+#
+# For NVIDIA, replace this with the appropriate CUDA PyTorch index.
+# ===========================================================================
+
+RUN uv pip install \
+        torch \
+        torchvision \
+        torchaudio \
+        --index-url https://download.pytorch.org/whl/cpu
+
+# ===========================================================================
+# Common scientific / ML dependencies
+# ===========================================================================
+
+RUN uv pip install \
+        numpy \
+        scipy \
+        pandas \
+        matplotlib \
+        scikit-learn \
+        sympy \
+        pillow \
+        pyyaml \
+        requests \
+        httpx \
+        tqdm \
+        einops \
+        psutil
+
+# ===========================================================================
+# Verification
+# ===========================================================================
+
+RUN echo "============================================================" \
+    && echo "Core tools" \
+    && echo "============================================================" \
+    && rg --version \
+    && fd --version \
+    && git --version \
+    && cmake --version \
+    \
+    && echo "============================================================" \
+    && echo "C / C++" \
+    && echo "============================================================" \
+    && clang --version \
+    && clangd --version \
+    && clang-format --version \
+    && clang-tidy --version \
+    \
+    && echo "============================================================" \
+    && echo "Java" \
+    && echo "============================================================" \
+    && java -version \
+    && javac -version \
+    && mvn --version \
+    && gradle --version \
+    \
+    && echo "============================================================" \
+    && echo "Rust" \
+    && echo "============================================================" \
+    && rustc --version \
+    && cargo --version \
+    && rust-analyzer --version \
+    && just --version \
+    \
+    && echo "============================================================" \
+    && echo "Android" \
+    && echo "============================================================" \
+    && sdkmanager --version \
+    \
+    && echo "============================================================" \
+    && echo "Python" \
+    && echo "============================================================" \
+    && python --version \
+    && uv --version \
+    && pyright --version \
+    && command -v pyright-langserver \
+    \
+    && echo "============================================================" \
+    && echo "Base development environment ready" \
+    && echo "============================================================"
+
+# ===========================================================================
+# Final
+#
+# This image intentionally contains neither Claude Code nor OpenCode.
+# Derived images should install their respective agent.
+# ===========================================================================
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]

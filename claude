@@ -10,14 +10,14 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CONTAINERFILE_DIR="$SCRIPT_DIR"
 
 BASE_CONTAINERFILE="$CONTAINERFILE_DIR/Containerfile-agent-base"
-OPENCODE_CONTAINERFILE="$CONTAINERFILE_DIR/Containerfile-opencode"
+CLAUDE_CONTAINERFILE="$CONTAINERFILE_DIR/Containerfile-claude"
 
 BASE_IMAGE_NAME="agent-base:latest"
-IMAGE_NAME="opencode-dev:latest"
+IMAGE_NAME="claude-dev:latest"
 
 # One container per project, so the bind mount can never point at
 # a different project after the container has been created.
-CONTAINER_NAME="opencode-${PROJECT_NAME}"
+CONTAINER_NAME="claude-${PROJECT_NAME}"
 
 # The project gets its own stable path inside the container:
 #
@@ -27,59 +27,59 @@ CONTAINER_PROJECT_DIR="/workspace/${PROJECT_NAME}"
 
 
 # ===========================================================================
-# Remove all OpenCode containers and images
+# Remove all Claude containers and images
 #
 # Usage:
 #
-#   ./run-opencode.sh rm
+#   ./run-claude.sh rm
 #
 # This removes:
 #
-#   opencode-* containers
-#   opencode-dev:latest
+#   claude-* containers
+#   claude-dev:latest
 #
 # Then it attempts to remove:
 #
 #   agent-base:latest
 #
-# If agent-base is still referenced by another container (for example a
-# Claude Code container), the base image is NOT forcibly removed. The
-# blocking containers are reported and the script exits with an error.
+# If agent-base is still referenced by another container (for example an
+# OpenCode container), the base image is NOT forcibly removed. The blocking
+# containers are reported and the script exits with an error.
 # ===========================================================================
 
 remove_all() {
     echo "============================================================"
-    echo "Removing OpenCode containers and images"
+    echo "Removing Claude containers and images"
     echo "============================================================"
     echo
 
     # -----------------------------------------------------------------------
-    # Find all OpenCode containers.
+    # Find all Claude containers.
     #
     # We use the container name rather than the current project name so this
-    # removes OpenCode containers belonging to every project.
+    # removes Claude containers belonging to every project.
     # -----------------------------------------------------------------------
 
-    mapfile -t OPENCODE_CONTAINERS < <(
+    mapfile -t CLAUDE_CONTAINERS < <(
         podman ps -a \
             --format '{{.Names}}' \
-            | grep '^opencode-' \
+            | grep '^claude-' \
             || true
     )
 
-    if ((${#OPENCODE_CONTAINERS[@]} == 0)); then
-        echo "No OpenCode containers found."
+    if ((${#CLAUDE_CONTAINERS[@]} == 0)); then
+        echo "No Claude containers found."
     else
-        echo "OpenCode containers to remove:"
+        echo "Claude containers to remove:"
 
-        for container in "${OPENCODE_CONTAINERS[@]}"; do
+        for container in "${CLAUDE_CONTAINERS[@]}"; do
             echo "  $container"
         done
 
         echo
 
         # Remove both running and stopped containers.
-        for container in "${OPENCODE_CONTAINERS[@]}"; do
+        for container in "${CLAUDE_CONTAINERS[@]}"; do
             echo "Removing container: $container"
             podman rm -f "$container"
         done
@@ -88,15 +88,15 @@ remove_all() {
     echo
 
     # -----------------------------------------------------------------------
-    # Remove OpenCode image.
+    # Remove Claude image.
     # -----------------------------------------------------------------------
 
     if podman image exists "$IMAGE_NAME"; then
-        echo "Removing OpenCode image: $IMAGE_NAME"
+        echo "Removing Claude image: $IMAGE_NAME"
 
         if ! podman rmi "$IMAGE_NAME"; then
             echo
-            echo "ERROR: Could not remove OpenCode image '$IMAGE_NAME'."
+            echo "ERROR: Could not remove Claude image '$IMAGE_NAME'."
             echo "The image is still referenced by one or more containers."
             echo
             echo "Containers referencing this image:"
@@ -108,7 +108,7 @@ remove_all() {
             exit 1
         fi
     else
-        echo "OpenCode image '$IMAGE_NAME' does not exist."
+        echo "Claude image '$IMAGE_NAME' does not exist."
     fi
 
     echo
@@ -118,9 +118,8 @@ remove_all() {
     #
     # Do NOT use --force here.
     #
-    # If Claude or another derived container still exists, Podman will refuse
-    # to remove the base image. We catch that condition and report exactly
-    # which containers are still using it.
+    # If OpenCode or another derived container still exists, Podman will
+    # refuse to remove the base image. We report the blocking containers.
     # -----------------------------------------------------------------------
 
     if podman image exists "$BASE_IMAGE_NAME"; then
@@ -131,7 +130,7 @@ remove_all() {
             echo "ERROR: Could not remove base image '$BASE_IMAGE_NAME'."
             echo
             echo "The base image is still referenced by existing containers."
-            echo "This may include Claude Code containers."
+            echo "This may include OpenCode containers."
             echo
             echo "Containers referencing '$BASE_IMAGE_NAME':"
 
@@ -164,7 +163,7 @@ remove_all() {
 
     echo
     echo "============================================================"
-    echo "OpenCode cleanup complete"
+    echo "Claude cleanup complete"
     echo "============================================================"
 }
 
@@ -180,10 +179,10 @@ fi
 
 
 # ===========================================================================
-# Normal OpenCode startup
+# Normal Claude startup
 # ===========================================================================
 
-echo "Starting OpenCode for project: $PROJECT_DIR"
+echo "Starting Claude for project: $PROJECT_DIR"
 echo "Container project path: $CONTAINER_PROJECT_DIR"
 
 
@@ -220,8 +219,8 @@ if [[ ! -f "$BASE_CONTAINERFILE" ]]; then
     exit 1
 fi
 
-if [[ ! -f "$OPENCODE_CONTAINERFILE" ]]; then
-    echo "OpenCode Containerfile not found: $OPENCODE_CONTAINERFILE"
+if [[ ! -f "$CLAUDE_CONTAINERFILE" ]]; then
+    echo "Claude Containerfile not found: $CLAUDE_CONTAINERFILE"
     exit 1
 fi
 
@@ -247,22 +246,22 @@ fi
 
 
 # ===========================================================================
-# Build OpenCode image
+# Build Claude image
 # ===========================================================================
 
 if ! podman image exists "$IMAGE_NAME"; then
     echo
     echo "Podman image '$IMAGE_NAME' does not exist."
-    echo "Building OpenCode image from:"
-    echo "  $OPENCODE_CONTAINERFILE"
+    echo "Building Claude image from:"
+    echo "  $CLAUDE_CONTAINERFILE"
     echo
 
     podman build \
-        --file "$OPENCODE_CONTAINERFILE" \
+        --file "$CLAUDE_CONTAINERFILE" \
         --tag "$IMAGE_NAME" \
         "$CONTAINERFILE_DIR"
 else
-    echo "OpenCode image '$IMAGE_NAME' already exists."
+    echo "Claude image '$IMAGE_NAME' already exists."
 fi
 
 
@@ -277,7 +276,7 @@ if [[ "${1:-}" == "sh" ]]; then
 
     if ! podman container exists "$CONTAINER_NAME"; then
         echo "Container '$CONTAINER_NAME' does not exist."
-        echo "Start OpenCode normally first to create it."
+        echo "Start Claude normally first to create it."
         exit 1
     fi
 
@@ -308,12 +307,10 @@ fi
 
 
 # ===========================================================================
-# OpenCode persistent state
+# Claude persistent state
 # ===========================================================================
 
-mkdir -p "$HOME/.config/opencode"
-mkdir -p "$HOME/.local/state/opencode"
-mkdir -p "$HOME/.local/share/opencode"
+mkdir -p "$HOME/.claude"
 
 
 # ===========================================================================
@@ -330,15 +327,13 @@ exec podman run -it \
     --cap-drop=ALL \
     --security-opt=no-new-privileges \
     --network=host \
-    -e XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}" \
+    -e XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
     -e HOME=/home/agentuser \
     -e XDG_CONFIG_HOME=/home/agentuser/.config \
     -e XDG_DATA_HOME=/home/agentuser/.local/share \
     -e XDG_CACHE_HOME=/home/agentuser/.cache \
     -e ANDROID_HOME=/home/agentuser/Android/Sdk \
-    -v "$HOME/.local/share/opencode:/home/agentuser/.local/share/opencode:rw,Z" \
-    -v "$HOME/.local/state/opencode:/home/agentuser/.local/state/opencode:rw,Z" \
-    -v "$HOME/.config/opencode:/home/agentuser/.config/opencode:rw,Z" \
+    -v "$HOME/.claude:/home/agentuser/.claude:rw,Z" \
     -v "$PROJECT_DIR:$CONTAINER_PROJECT_DIR:rw,Z" \
     -w "$CONTAINER_PROJECT_DIR" \
     "$IMAGE_NAME"

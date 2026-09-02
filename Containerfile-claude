@@ -1,0 +1,11 @@
+FROM agent-base:latest
+
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && claude --version
+
+RUN mkdir -p \
+    "${HOME}/.claude"
+
+WORKDIR /workspace
+
+CMD ["claude"]
